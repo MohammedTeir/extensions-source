@@ -59,7 +59,7 @@ jobs:
 
       - name: ProChan image reliability regression checks
         working-directory: source
-        run: python -m unittest discover -s .github/scripts -p 'test-prochan-image-reliability.py' -v
+        run: python .github/scripts/test-prochan-image-reliability.py -v
 
       - name: Build signed release and validate
         working-directory: source
