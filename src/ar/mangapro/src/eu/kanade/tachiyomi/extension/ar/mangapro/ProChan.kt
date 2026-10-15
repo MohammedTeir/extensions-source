@@ -15,6 +15,9 @@ import keiyoushi.utils.tryParse
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import rx.Observable
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -175,7 +178,7 @@ class ProChan(
                 SManga.create().apply {
                     url = mangaUrl(update.mangaSlug, update.mangaId)
                     title = update.mangaTitle
-                    thumbnail_url = normalizeImageUrl(update.coverImageApp?.desktop ?: update.coverImage)
+                    thumbnail_url = coverUrl(update.coverImageApp, update.coverImage)
                 }
             }
             .toList()
@@ -239,11 +242,7 @@ class ProChan(
                 "متوقف" -> SManga.ON_HIATUS
                 else -> SManga.UNKNOWN
             }
-            thumbnail_url = normalizeImageUrl(
-                manga.metadata.coverImageApp?.desktop
-                    ?: manga.metadata.coverImage
-                    ?: manga.thumbnail,
-            )
+            thumbnail_url = coverUrl(manga.metadata.coverImageApp ?: manga.coverImageApp, manga.metadata.coverImage, manga.thumbnail)
             initialized = true
         }
     }
@@ -362,7 +361,7 @@ class ProChan(
         return SManga.create().apply {
             url = mangaUrl(manga.slug, manga.id)
             title = manga.title
-            thumbnail_url = normalizeImageUrl(manga.coverImageApp?.desktop ?: manga.thumbnail)
+            thumbnail_url = coverUrl(manga.coverImageApp, manga.thumbnail, manga.metadata.coverImage)
         }
     }
 
@@ -380,6 +379,25 @@ class ProChan(
         mangaTypeCache[id] = content.type
         mangaSlugCache[id] = content.slug
         return content.type
+    }
+
+    private fun coverUrl(cover: CoverImage?, vararg fallbacks: String?): String? {
+        val card = cover?.card
+        val cardUrls = when (card) {
+            is JsonObject -> listOf(
+                (card["mobile"] as? JsonPrimitive)?.contentOrNull,
+                (card["desktop"] as? JsonPrimitive)?.contentOrNull,
+            )
+            is JsonPrimitive -> listOf(card.contentOrNull)
+            else -> emptyList()
+        }
+        val candidates = (cardUrls + listOf(cover?.mobile, cover?.desktop) + fallbacks.toList())
+            .mapNotNull(::normalizeImageUrl)
+            .distinct()
+        // Prefer conventional cover formats over AVIF, which can fail to decode
+        // on some Android image-loader/device combinations.
+        return candidates.firstOrNull { !it.substringBefore('?').endsWith(".avif", ignoreCase = true) }
+            ?: candidates.firstOrNull()
     }
 
     private fun normalizeImageUrl(url: String?): String? = url
