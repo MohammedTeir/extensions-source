@@ -59,7 +59,7 @@ class ContentMetadata(
 class CoverImage(
     val mobile: String? = null,
     val desktop: String? = null,
-    val card: String? = null,
+    val card: JsonElement? = null,
 )
 
 @Serializable
