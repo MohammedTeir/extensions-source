@@ -58,10 +58,9 @@ class ProChan(
     }
 
     // Website Latest comics endpoint already groups chapters by series.
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> =
-        client.newCall(latestUpdatesRequest(page))
-            .asObservableSuccess()
-            .map(::latestUpdatesParse)
+    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> = client.newCall(latestUpdatesRequest(page))
+        .asObservableSuccess()
+        .map(::latestUpdatesParse)
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
         if (query.startsWith("https://") || query.startsWith("http://")) {
