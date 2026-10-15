@@ -37,6 +37,9 @@ class ProChan(
     private val mangaTypeCache = ConcurrentHashMap<String, String>()
     private val mangaSlugCache = ConcurrentHashMap<String, String>()
     private val imageFallbacks = ConcurrentHashMap<String, String>()
+    private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
+    @Volatile
+    private var activeSearchGeneration = 0L
 
     override val client = network.client.newBuilder()
         .addInterceptor(
@@ -132,8 +135,10 @@ class ProChan(
         val cached = searchSnapshot?.takeIf {
             page > 1 && it.key == key && now - it.createdAt in 0 until SEARCH_CACHE_MILLIS
         }
+        val generation = searchGeneration.incrementAndGet()
+        activeSearchGeneration = generation
         val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
-        return fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters)
+        return fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation)
     }
 
     private class SearchSnapshot(
@@ -153,6 +158,7 @@ class ProChan(
         end: Int,
         query: String,
         filters: FilterList,
+        generation: Long,
     ): Observable<MangasPage> {
         if (snapshot.mangas.size >= end || !snapshot.hasMore || snapshot.nextPage > MAX_SEARCH_PAGES) {
             return Observable.just(
@@ -173,14 +179,10 @@ class ProChan(
                     result.hasNextPage,
                     snapshot.createdAt,
                 )
-                if (
-                    (searchSnapshot?.key == snapshot.key && searchSnapshot?.createdAt == snapshot.createdAt) ||
-                    searchSnapshot == null ||
-                    snapshot.nextPage == 1
-                ) {
+                if (activeSearchGeneration == generation) {
                     searchSnapshot = next
                 }
-                fetchFilteredSearchPage(next, start, end, query, filters)
+                fetchFilteredSearchPage(next, start, end, query, filters, generation)
             }
     }
 
