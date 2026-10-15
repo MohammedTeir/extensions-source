@@ -21,6 +21,7 @@ import okhttp3.Response
 import rx.Observable
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.logging.Logger
 import java.util.concurrent.ConcurrentHashMap
 
 @Source
@@ -68,11 +69,13 @@ class ProChan(
             }
             .toList()
             .map { batches ->
-                val mangas = batches.asSequence()
-                    .flatMap { it.data.asSequence() }
-                    .filter { it.type in SUPPORTED_TYPES }
-                    .filter { it.language == null || it.language == "AR" }
+                val updates = batches.flatMap { it.data }
+                val eligible = updates.asSequence()
+                    .filter { it.type.lowercase(Locale.ROOT) in SUPPORTED_TYPES }
+                    .filter { it.language == null || it.language.equals("AR", ignoreCase = true) }
                     .filterNot { it.isBlockedSeries }
+                    .toList()
+                val mangas = eligible.asSequence()
                     .distinctBy { it.mangaId }
                     .map { update ->
                         mangaTypeCache[update.mangaId.toString()] = update.type
@@ -85,6 +88,13 @@ class ProChan(
                     }
                     .toList()
                 val last = batches.last()
+                logger.warning(
+                    "ProChan Latest diagnostics: page=$page batches=${batches.size} raw=${updates.size} " +
+                        "supported=${updates.count { it.type.lowercase(Locale.ROOT) in SUPPORTED_TYPES }} " +
+                        "arabicOrUnknown=${updates.count { it.language == null || it.language.equals("AR", ignoreCase = true) }} " +
+                        "unblocked=${updates.count { !it.isBlockedSeries }} eligible=${eligible.size} " +
+                        "unique=${mangas.size} lastBatch=${last.batch} total=${last.total} limit=${last.limit}",
+                )
                 MangasPage(mangas, (last.batch + 1) * last.limit < last.total)
             }
     }
@@ -504,6 +514,7 @@ class ProChan(
         }
 
     companion object {
+        private val logger = Logger.getLogger(ProChan::class.java.name)
         private val LEGACY_IMAGE_HOST_REGEX = Regex("^https?://app\\.prochan\\.net/", RegexOption.IGNORE_CASE)
         private const val MAX_IMAGE_RETRIES = 1
         private const val PAGE_SIZE = 18
