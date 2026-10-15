@@ -215,8 +215,10 @@ class ProChan(
                     result.hasNextPage,
                     snapshot.createdAt,
                 )
-                if (searchSnapshot?.key == snapshot.key && searchSnapshot?.createdAt == snapshot.createdAt ||
-                    searchSnapshot == null || snapshot.nextPage == 1
+                if (
+                    (searchSnapshot?.key == snapshot.key && searchSnapshot?.createdAt == snapshot.createdAt) ||
+                    searchSnapshot == null ||
+                    snapshot.nextPage == 1
                 ) {
                     searchSnapshot = next
                 }
