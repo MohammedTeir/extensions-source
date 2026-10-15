@@ -13,7 +13,7 @@ dependencies {
 sourceSets {
     main {
         kotlin.srcDir("../../src/ar/mangapro/src/eu/kanade/tachiyomi/extension/ar/mangapro")
-        kotlin.include("**/ProChanImageRecoveryInterceptor.kt")
+        kotlin.include("**/ProChanImageRecoveryInterceptor.kt", "**/BoundedImageFallbackCache.kt")
     }
 }
 
