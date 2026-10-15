@@ -38,7 +38,7 @@ class ProChan(
     private val mangaSlugCache = ConcurrentHashMap<String, String>()
     private val imageFallbacks = ConcurrentHashMap<String, String>()
 
-    override val client = network.cloudflareClient.newBuilder()
+    override val client = network.client.newBuilder()
         .addInterceptor(
             Interceptor { chain ->
                 val request = chain.request()
