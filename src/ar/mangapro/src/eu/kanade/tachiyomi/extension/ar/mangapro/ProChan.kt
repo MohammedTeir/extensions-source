@@ -38,6 +38,7 @@ class ProChan(
     private val mangaSlugCache = ConcurrentHashMap<String, String>()
     private val imageFallbacks = ConcurrentHashMap<String, String>()
     private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
+
     @Volatile
     private var activeSearchGeneration = 0L
 
