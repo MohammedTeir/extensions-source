@@ -61,6 +61,10 @@ jobs:
         working-directory: source
         run: python .github/scripts/test-prochan-image-reliability.py -v
 
+      - name: Simulated HTTP image recovery tests
+        working-directory: source
+        run: ./gradlew -p tests/prochan-http test --no-daemon --console=plain
+
       - name: Build signed release and validate
         working-directory: source
         env:
