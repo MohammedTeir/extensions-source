@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "ProChan"
-    versionCode = 66
+    versionCode = 67
     contentWarning = ContentWarning.NSFW
     libVersion = "1.4"
     source {
