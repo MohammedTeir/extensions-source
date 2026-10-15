@@ -56,11 +56,38 @@ class ProChan(
             .map { response -> searchMangaParse(response, filters) }
     }
 
-    // The API already paginates latest updates by batch. Fetch one batch per Mihon page
-    // rather than waiting for 18 unique entries across an unbounded number of requests.
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> = client.newCall(latestUpdatesRequest(page))
-        .asObservableSuccess()
-        .map(::latestUpdatesParse)
+    // Consume a fixed, non-overlapping window of API batches per Mihon page.
+    // This avoids stopping at a filtered-empty batch or losing entries between pages.
+    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> {
+        val firstBatch = (page - 1).coerceAtLeast(0) * LATEST_BATCHES_PER_PAGE
+        return Observable.range(firstBatch, LATEST_BATCHES_PER_PAGE)
+            .concatMap { batch ->
+                client.newCall(latestUpdatesBatchRequest(batch))
+                    .asObservableSuccess()
+                    .map { response -> response.parseAs<LatestUpdatesPage>() }
+            }
+            .toList()
+            .map { batches ->
+                val mangas = batches.asSequence()
+                    .flatMap { it.data.asSequence() }
+                    .filter { it.type in SUPPORTED_TYPES }
+                    .filter { it.language == null || it.language == "AR" }
+                    .filterNot { it.isBlockedSeries }
+                    .distinctBy { it.mangaId }
+                    .map { update ->
+                        mangaTypeCache[update.mangaId.toString()] = update.type
+                        mangaSlugCache[update.mangaId.toString()] = update.mangaSlug
+                        SManga.create().apply {
+                            url = mangaUrl(update.mangaSlug, update.mangaId)
+                            title = update.mangaTitle
+                            thumbnail_url = coverUrl(update.coverImageApp, update.coverImage)
+                        }
+                    }
+                    .toList()
+                val last = batches.last()
+                MangasPage(mangas, (last.batch + 1) * last.limit < last.total)
+            }
+    }
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
         if (query.startsWith("https://") || query.startsWith("http://")) {
@@ -199,9 +226,11 @@ class ProChan(
         return MangasPage(mangas, result.meta.pages > result.meta.page)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request {
+    override fun latestUpdatesRequest(page: Int): Request = latestUpdatesBatchRequest((page - 1).coerceAtLeast(0) * LATEST_BATCHES_PER_PAGE)
+
+    private fun latestUpdatesBatchRequest(batch: Int): Request {
         val url = "$baseUrl/api/public/content/latest-chapter-updates".toHttpUrl().newBuilder()
-            .addQueryParameter("batch", (page - 1).coerceAtLeast(0).toString())
+            .addQueryParameter("batch", batch.toString())
             .build()
         return GET(url, headers)
     }
@@ -478,6 +507,7 @@ class ProChan(
         private val LEGACY_IMAGE_HOST_REGEX = Regex("^https?://app\\.prochan\\.net/", RegexOption.IGNORE_CASE)
         private const val MAX_IMAGE_RETRIES = 1
         private const val PAGE_SIZE = 18
+        private const val LATEST_BATCHES_PER_PAGE = 6
         private const val MAX_SEARCH_PAGES = 100
         private const val SEARCH_CACHE_MILLIS = 120_000L
         private const val LATEST_CACHE_MILLIS = 120_000L
