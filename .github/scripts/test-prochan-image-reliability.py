@@ -17,6 +17,7 @@ class ImageReliabilityContract(unittest.TestCase):
 
     def test_desktop_to_mobile_fallback_registered(self):
         self.assertIn("imageFallbacks[desktop] = mobile", self.code)
+        self.assertIn("BoundedImageFallbackCache()", self.code)
         self.assertIn("desktop ?: mobile", self.code)
 
     def test_executable_interceptor_wiring(self):
