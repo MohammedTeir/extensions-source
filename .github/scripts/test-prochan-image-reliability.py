@@ -42,6 +42,8 @@ class ImageReliabilityContract(unittest.TestCase):
         self.assertIn("fetchFilteredSearchPage(next, start, end, query, filters, generation)", self.code)
 
     def test_url_normalization(self):
+        self.assertIn("LEGACY_IMAGE_HOST_REGEX", self.code)
+        self.assertIn("RegexOption.IGNORE_CASE", self.code)
         self.assertIn('value.startsWith("//") -> "https:$value"', self.code)
         self.assertIn('value.startsWith("/") -> "https://app.procomic.pro$value"', self.code)
 
