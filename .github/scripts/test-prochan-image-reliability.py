@@ -35,6 +35,14 @@ class ImageReliabilityContract(unittest.TestCase):
     def test_failed_responses_closed_before_retry(self):
         self.assertGreaterEqual(self.code.count("response.close()"), 2)
 
+    def test_cover_fallback_registered(self):
+        self.assertIn("imageFallbacks[primary] = it", self.code)
+        self.assertIn("candidates.firstOrNull { it != primary }", self.code)
+
+    def test_timeout_preserves_http_failure(self):
+        self.assertIn("return@Interceptor lastResponse ?: throw e", self.code)
+        self.assertIn("if (attempt < MAX_IMAGE_RETRIES) continue", self.code)
+
     def test_stale_search_requests_cannot_overwrite_cache(self):
         self.assertIn("private val searchGeneration = java.util.concurrent.atomic.AtomicLong()", self.code)
         self.assertIn("val generation = searchGeneration.incrementAndGet()", self.code)
