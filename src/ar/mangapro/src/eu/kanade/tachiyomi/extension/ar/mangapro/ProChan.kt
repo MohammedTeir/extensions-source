@@ -79,7 +79,6 @@ class ProChan(
         )
         .build()
 
-
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/ar/")
         .set("Origin", baseUrl)
