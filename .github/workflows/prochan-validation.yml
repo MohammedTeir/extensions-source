@@ -1,0 +1,70 @@
+name: ProChan validation
+
+on:
+  push:
+    branches:
+      - prochan-procomic-update
+    paths:
+      - "src/ar/mangapro/**"
+      - ".github/workflows/prochan-validation.yml"
+  pull_request:
+    paths:
+      - "src/ar/mangapro/**"
+      - ".github/workflows/prochan-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prochan-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Build ProChan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 37 SDK packages
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDK_ROOT"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          "$SDKMANAGER" --install 'platforms;android-37.0' 'build-tools;36.0.0' 'platform-tools'
+
+      - name: Check formatting, lint, and build debug APK
+        run: >-
+          ./gradlew
+          :src:ar:mangapro:spotlessCheck
+          :src:ar:mangapro:lintRelease
+          :src:ar:mangapro:assembleDebug
+          --no-daemon
+          --console=plain
+
+      - name: Upload debug APK for validation only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prochan-debug-apk-not-for-repository
+          path: src/ar/mangapro/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
