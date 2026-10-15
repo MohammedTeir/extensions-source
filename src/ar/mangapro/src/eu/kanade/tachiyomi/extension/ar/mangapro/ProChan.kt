@@ -419,7 +419,9 @@ class ProChan(
             ?: throw Exception("تعذر قراءة صور الفصل")
         val images = imagesJson.parseAs<List<ChapterPageImage>>()
             .mapNotNull { image ->
-                normalizeImageUrl(image.desktop?.takeIf(String::isNotBlank) ?: image.mobile?.takeIf(String::isNotBlank))
+                sequenceOf(image.desktop, image.mobile)
+                    .mapNotNull(::normalizeImageUrl)
+                    .firstOrNull()
             }
         if (images.isEmpty()) throw Exception("لا توجد صور متاحة لهذا الفصل")
 
@@ -487,7 +489,14 @@ class ProChan(
         ?.trim()
         ?.takeIf(String::isNotEmpty)
         ?.replace("https://app.prochan.net/", "https://app.procomic.pro/")
-        ?.let { if (it.startsWith("/")) "https://app.procomic.pro$it" else it }
+        ?.let { value ->
+            when {
+                value.startsWith("//") -> "https:$value"
+                value.startsWith("/") -> "https://app.procomic.pro$value"
+                value.startsWith("https://") || value.startsWith("http://") -> value
+                else -> null
+            }
+        }
 
     companion object {
         private const val PAGE_SIZE = 18
