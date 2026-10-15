@@ -408,6 +408,12 @@ class ProChan(
     override fun getChapterUrl(chapter: SChapter): String = "$baseUrl${chapter.url}"
 
     override fun pageListParse(response: Response): List<Page> {
+        when (response.code) {
+            401, 403 -> throw Exception("رفض الموقع الوصول إلى الفصل؛ افتحه في WebView للتحقق من الجلسة")
+            404 -> throw Exception("الفصل غير موجود أو تم حذفه من الموقع")
+            429 -> throw Exception("طلبات كثيرة للموقع؛ يرجى المحاولة لاحقًا")
+        }
+        if (!response.isSuccessful) throw Exception("تعذر تحميل الفصل (HTTP ${response.code})")
         val body = response.body.string().replace("\\\"", "\"")
         if (REQUIRES_TURNSTILE_REGEX.containsMatchIn(body)) {
             throw Exception("يتطلب الموقع إكمال التحقق قبل فتح الفصل")
