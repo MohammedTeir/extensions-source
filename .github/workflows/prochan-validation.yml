@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - prochan-procomic-update
+      - main
     paths:
       - "src/ar/mangapro/**"
       - ".github/workflows/prochan-validation.yml"
@@ -62,22 +63,13 @@ jobs:
             echo "::notice::Signed release build skipped; add all four ProChan signing secrets to enable it."
           fi
 
-      - name: Check formatting, lint, and build debug APK
+      - name: Check formatting and release lint
         run: >-
           ./gradlew
           :src:ar:mangapro:spotlessCheck
           :src:ar:mangapro:lintRelease
-          :src:ar:mangapro:assembleDebug
           --no-daemon
           --console=plain
-
-      - name: Upload debug APK for validation only
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: prochan-debug-apk-not-for-repository
-          path: src/ar/mangapro/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 7
 
       - name: Restore ProChan signing keystore
         if: steps.signing.outputs.configured == 'true'
