@@ -57,25 +57,53 @@ class ProChan(
             .map { response -> searchMangaParse(response, filters) }
     }
 
-    // Consume a fixed, non-overlapping window of API batches per Mihon page.
-    // This avoids stopping at a filtered-empty batch or losing entries between pages.
+    // The API paginates chapter updates, not unique series. Fill Mihon pages from
+    // eligible distinct series, keeping the batch cursor in a short-lived snapshot.
     override fun fetchLatestUpdates(page: Int): Observable<MangasPage> {
-        val firstBatch = (page - 1).coerceAtLeast(0) * LATEST_BATCHES_PER_PAGE
-        return Observable.range(firstBatch, LATEST_BATCHES_PER_PAGE)
-            .concatMap { batch ->
-                client.newCall(latestUpdatesBatchRequest(batch))
-                    .asObservableSuccess()
-                    .map { response -> response.parseAs<LatestUpdatesPage>() }
-            }
-            .toList()
-            .map { batches ->
-                val updates = batches.flatMap { it.data }
-                val eligible = updates.asSequence()
+        val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
+        val now = System.currentTimeMillis()
+        val cached = latestSnapshot?.takeIf {
+            page > 1 && now - it.createdAt in 0 until LATEST_CACHE_MILLIS
+        }
+        val generation = latestGeneration.incrementAndGet()
+        val snapshot = cached ?: LatestSnapshot(emptyList(), 0, true, now)
+        return fetchLatestPage(snapshot, start, start + PAGE_SIZE, generation)
+    }
+
+    private class LatestSnapshot(
+        val mangas: List<SManga>,
+        val nextBatch: Int,
+        val hasMore: Boolean,
+        val createdAt: Long,
+    )
+
+    @Volatile
+    private var latestSnapshot: LatestSnapshot? = null
+
+    private val latestGeneration = java.util.concurrent.atomic.AtomicLong()
+
+    private fun fetchLatestPage(
+        snapshot: LatestSnapshot,
+        start: Int,
+        end: Int,
+        generation: Long,
+    ): Observable<MangasPage> {
+        if (snapshot.mangas.size >= end || !snapshot.hasMore || snapshot.nextBatch >= MAX_LATEST_BATCHES) {
+            return Observable.just(
+                MangasPage(
+                    snapshot.mangas.drop(start).take(PAGE_SIZE),
+                    snapshot.mangas.size > end || (snapshot.hasMore && snapshot.nextBatch < MAX_LATEST_BATCHES),
+                ),
+            )
+        }
+        return client.newCall(latestUpdatesBatchRequest(snapshot.nextBatch))
+            .asObservableSuccess()
+            .map { response -> response.parseAs<LatestUpdatesPage>() }
+            .flatMap { result ->
+                val eligible = result.data.asSequence()
                     .filter { it.type.lowercase(Locale.ROOT) in SUPPORTED_TYPES }
                     .filter { it.language == null || it.language.equals("AR", ignoreCase = true) }
                     .filterNot { it.isBlockedSeries }
-                    .toList()
-                val mangas = eligible.asSequence()
                     .distinctBy { it.mangaId }
                     .map { update ->
                         mangaTypeCache[update.mangaId.toString()] = update.type
@@ -87,15 +115,21 @@ class ProChan(
                         }
                     }
                     .toList()
-                val last = batches.last()
-                logger.warning(
-                    "ProChan Latest diagnostics: page=$page batches=${batches.size} raw=${updates.size} " +
-                        "supported=${updates.count { it.type.lowercase(Locale.ROOT) in SUPPORTED_TYPES }} " +
-                        "arabicOrUnknown=${updates.count { it.language == null || it.language.equals("AR", ignoreCase = true) }} " +
-                        "unblocked=${updates.count { !it.isBlockedSeries }} eligible=${eligible.size} " +
-                        "unique=${mangas.size} lastBatch=${last.batch} total=${last.total} limit=${last.limit}",
+                val next = LatestSnapshot(
+                    (snapshot.mangas + eligible).distinctBy { it.url },
+                    snapshot.nextBatch + 1,
+                    result.data.isNotEmpty() && result.limit > 0 &&
+                        (result.batch + 1L) * result.limit < result.total,
+                    snapshot.createdAt,
                 )
-                MangasPage(mangas, (last.batch + 1) * last.limit < last.total)
+                logger.warning(
+                    "ProChan Latest: batch=${result.batch} raw=${result.data.size} " +
+                        "eligible=${eligible.size} unique=${next.mangas.size} next=${next.hasMore}",
+                )
+                if (latestGeneration.get() == generation) {
+                    latestSnapshot = next
+                }
+                fetchLatestPage(next, start, end, generation)
             }
     }
 
@@ -236,7 +270,7 @@ class ProChan(
         return MangasPage(mangas, result.meta.pages > result.meta.page)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request = latestUpdatesBatchRequest((page - 1).coerceAtLeast(0) * LATEST_BATCHES_PER_PAGE)
+    override fun latestUpdatesRequest(page: Int): Request = latestUpdatesBatchRequest((page - 1).coerceAtLeast(0))
 
     private fun latestUpdatesBatchRequest(batch: Int): Request {
         val url = "$baseUrl/api/public/content/latest-chapter-updates".toHttpUrl().newBuilder()
@@ -518,7 +552,7 @@ class ProChan(
         private val LEGACY_IMAGE_HOST_REGEX = Regex("^https?://app\\.prochan\\.net/", RegexOption.IGNORE_CASE)
         private const val MAX_IMAGE_RETRIES = 1
         private const val PAGE_SIZE = 18
-        private const val LATEST_BATCHES_PER_PAGE = 6
+        private const val MAX_LATEST_BATCHES = 120
         private const val MAX_SEARCH_PAGES = 100
         private const val SEARCH_CACHE_MILLIS = 120_000L
         private const val LATEST_CACHE_MILLIS = 120_000L
