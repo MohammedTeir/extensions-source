@@ -119,17 +119,33 @@ class ProChan(
             return fetchMangaDetails(manga).map { MangasPage(listOf(it), false) }
         }
 
-        return client.newCall(searchMangaRequest(page, query, filters))
-            .asObservableSuccess()
-            .map { response -> searchMangaParse(response, filters) }
-            .flatMap { result ->
-                if (result.mangas.isEmpty() && result.hasNextPage) {
-                    fetchSearchManga(page + 1, query, filters)
-                } else {
-                    Observable.just(result)
-                }
-            }
+        val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
+        return fetchFilteredSearchPage(1, start, start + PAGE_SIZE, query, filters, emptyList())
     }
+
+    private fun fetchFilteredSearchPage(
+        apiPage: Int,
+        start: Int,
+        end: Int,
+        query: String,
+        filters: FilterList,
+        collected: List<SManga>,
+    ): Observable<MangasPage> = client.newCall(searchMangaRequest(apiPage, query, filters))
+        .asObservableSuccess()
+        .map { response -> searchMangaParse(response, filters) }
+        .flatMap { result ->
+            val mangas = (collected + result.mangas).distinctBy { it.url }
+            if (result.hasNextPage && mangas.size < end && apiPage < MAX_SEARCH_PAGES) {
+                fetchFilteredSearchPage(apiPage + 1, start, end, query, filters, mangas)
+            } else {
+                Observable.just(
+                    MangasPage(
+                        mangas.drop(start).take(PAGE_SIZE),
+                        result.hasNextPage || mangas.size > end,
+                    ),
+                )
+            }
+        }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val sort = when (filters.firstInstance<SortFilter>().selected) {
@@ -440,6 +456,7 @@ class ProChan(
 
     companion object {
         private const val PAGE_SIZE = 18
+        private const val MAX_SEARCH_PAGES = 100
         private const val LATEST_CACHE_MILLIS = 120_000L
         private const val CHAPTER_PAGE_SIZE = 100
         private const val MAX_CHAPTER_PAGES = 100
