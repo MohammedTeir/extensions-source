@@ -95,10 +95,9 @@ class ProChan(
 
     // The API already paginates latest updates by batch. Fetch one batch per Mihon page
     // rather than waiting for 18 unique entries across an unbounded number of requests.
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> =
-        client.newCall(latestUpdatesRequest(page))
-            .asObservableSuccess()
-            .map(::latestUpdatesParse)
+    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> = client.newCall(latestUpdatesRequest(page))
+        .asObservableSuccess()
+        .map(::latestUpdatesParse)
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
         if (query.startsWith("https://") || query.startsWith("http://")) {
