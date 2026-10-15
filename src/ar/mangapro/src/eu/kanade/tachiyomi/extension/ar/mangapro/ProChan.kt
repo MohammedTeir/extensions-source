@@ -12,12 +12,12 @@ import keiyoushi.annotation.Source
 import keiyoushi.utils.firstInstance
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Request
-import okhttp3.Response
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Request
+import okhttp3.Response
 import rx.Observable
 import java.text.SimpleDateFormat
 import java.util.Locale
