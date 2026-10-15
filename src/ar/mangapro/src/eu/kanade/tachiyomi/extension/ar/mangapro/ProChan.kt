@@ -35,7 +35,7 @@ class ProChan(
 
     private val mangaTypeCache = ConcurrentHashMap<String, String>()
     private val mangaSlugCache = ConcurrentHashMap<String, String>()
-    private val imageFallbacks = ConcurrentHashMap<String, String>()
+    private val imageFallbacks = BoundedImageFallbackCache()
     private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
 
     override val client = network.client.newBuilder()
