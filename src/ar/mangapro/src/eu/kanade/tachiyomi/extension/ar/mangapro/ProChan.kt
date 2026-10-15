@@ -21,8 +21,8 @@ import okhttp3.Response
 import rx.Observable
 import java.text.SimpleDateFormat
 import java.util.Locale
-import java.util.logging.Logger
 import java.util.concurrent.ConcurrentHashMap
+import java.util.logging.Logger
 
 @Source
 class ProChan(
