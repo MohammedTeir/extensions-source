@@ -136,8 +136,12 @@ jobs:
           cache-read-only: true
 
       - name: Prepare signing key
+        if: github.repository == 'keiyoushi/extensions-source'
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY }}
         run: |
-          echo ${{ secrets.SIGNING_KEY }} | base64 -d > signingkey.jks
+          test -n "$SIGNING_KEY_BASE64"
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 -d > signingkey.jks
 
       - name: Build extensions (${{ matrix.chunk.number }})
         env:
@@ -165,7 +169,7 @@ jobs:
 
       - name: Clean up CI files
         if: always()
-        run: rm signingkey.jks
+        run: rm -f signingkey.jks
 
   publish:
     name: Publish extension repo
