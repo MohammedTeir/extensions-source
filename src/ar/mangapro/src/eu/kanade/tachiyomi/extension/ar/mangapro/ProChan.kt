@@ -502,7 +502,7 @@ class ProChan(
     private fun normalizeImageUrl(url: String?): String? = url
         ?.trim()
         ?.takeIf(String::isNotEmpty)
-        ?.replace("https://app.prochan.net/", "https://app.procomic.pro/")
+        ?.replace(LEGACY_IMAGE_HOST_REGEX, "https://app.procomic.pro/")
         ?.let { value ->
             when {
                 value.startsWith("//") -> "https:$value"
@@ -513,6 +513,7 @@ class ProChan(
         }
 
     companion object {
+        private val LEGACY_IMAGE_HOST_REGEX = Regex("^https?://app\\.prochan\\.net/", RegexOption.IGNORE_CASE)
         private const val MAX_IMAGE_RETRIES = 1
         private const val PAGE_SIZE = 18
         private const val MAX_SEARCH_PAGES = 100
