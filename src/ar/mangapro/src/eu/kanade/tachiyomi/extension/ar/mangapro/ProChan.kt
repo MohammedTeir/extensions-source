@@ -44,9 +44,30 @@ class ProChan(
         return fetchSearchManga(page, "", filters)
     }
 
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> = client.newCall(latestUpdatesRequest(page))
+    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> {
+        // The API returns chapter updates, not unique series. A batch can contain
+        // only one eligible Arabic manga (or none), so fill a Mihon page from
+        // several consecutive batches instead of stopping at the first one.
+        val firstBatch = (page - 1).coerceAtLeast(0) * LATEST_BATCHES_PER_PAGE
+        return fetchLatestBatches(firstBatch, 0, emptyList())
+    }
+
+    private fun fetchLatestBatches(
+        batch: Int,
+        batchesFetched: Int,
+        collected: List<SManga>,
+    ): Observable<MangasPage> = client.newCall(latestUpdatesRequest(batch + 1))
         .asObservableSuccess()
         .map(::latestUpdatesParse)
+        .flatMap { result ->
+            val mangas = (collected + result.mangas).distinctBy { it.url }
+            val fetched = batchesFetched + 1
+            if (result.hasNextPage && fetched < LATEST_BATCHES_PER_PAGE && mangas.size < PAGE_SIZE) {
+                fetchLatestBatches(batch + 1, fetched, mangas)
+            } else {
+                Observable.just(MangasPage(mangas, result.hasNextPage))
+            }
+        }
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
         if (query.startsWith("https://") || query.startsWith("http://")) {
@@ -369,6 +390,7 @@ class ProChan(
 
     companion object {
         private const val PAGE_SIZE = 18
+        private const val LATEST_BATCHES_PER_PAGE = 5
         private const val CHAPTER_PAGE_SIZE = 100
         private val SUPPORTED_TYPES = setOf("manga", "manhwa", "manhua")
         private val REQUIRES_TURNSTILE_REGEX = Regex("\"requireTurnstile\":true")
