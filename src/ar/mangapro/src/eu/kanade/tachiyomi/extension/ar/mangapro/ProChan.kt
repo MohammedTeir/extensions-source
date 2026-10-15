@@ -16,7 +16,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
@@ -40,43 +39,7 @@ class ProChan(
     private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
 
     override val client = network.client.newBuilder()
-        .addInterceptor(
-            Interceptor { chain ->
-                val request = chain.request()
-                val primary = request.url.toString()
-                val fallback = imageFallbacks[primary]
-                if (fallback == null) return@Interceptor chain.proceed(request)
-                val candidates = listOfNotNull(primary, fallback?.takeIf { it != primary })
-                var lastResponse: Response? = null
-                for ((index, candidate) in candidates.withIndex()) {
-                    val candidateRequest = request.newBuilder().url(candidate).build()
-                    for (attempt in 0..MAX_IMAGE_RETRIES) {
-                        val response = try {
-                            chain.proceed(candidateRequest)
-                        } catch (e: java.io.IOException) {
-                            if (attempt < MAX_IMAGE_RETRIES) continue
-                            if (index < candidates.lastIndex) break
-                            // Return a real HTTP failure if an earlier candidate produced one.
-                            return@Interceptor lastResponse ?: throw e
-                        }
-                        if (response.isSuccessful) return@Interceptor response
-                        val retryable = response.code == 429 || response.code in 500..599
-                        val useFallback = response.code == 403 || response.code == 404 || retryable
-                        if (retryable && attempt < MAX_IMAGE_RETRIES) {
-                            response.close()
-                            continue
-                        }
-                        if (useFallback && index < candidates.lastIndex) {
-                            response.close()
-                            break
-                        }
-                        lastResponse = response
-                        break
-                    }
-                }
-                lastResponse ?: throw java.io.IOException("تعذر تحميل الصورة من الخوادم المتاحة")
-            },
-        )
+        .addInterceptor(ProChanImageRecoveryInterceptor { imageFallbacks[it] })
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
