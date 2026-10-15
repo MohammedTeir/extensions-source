@@ -120,32 +120,67 @@ class ProChan(
         }
 
         val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
-        return fetchFilteredSearchPage(1, start, start + PAGE_SIZE, query, filters, emptyList())
+        val key = buildString {
+            append(query, '|', searchMangaRequest(1, query, filters).url)
+            append('|', filters.firstInstance<StatusFilter>().selected)
+            val genres = filters.firstInstance<GenreFilter>()
+            val tags = filters.firstInstance<TagFilter>()
+            append('|', genres.included.sorted(), '|', genres.excluded.sorted())
+            append('|', tags.included.sorted(), '|', tags.excluded.sorted())
+        }
+        val now = System.currentTimeMillis()
+        val cached = searchSnapshot?.takeIf {
+            page > 1 && it.key == key && now - it.createdAt in 0 until SEARCH_CACHE_MILLIS
+        }
+        val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
+        return fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters)
     }
 
+    private class SearchSnapshot(
+        val key: String,
+        val mangas: List<SManga>,
+        val nextPage: Int,
+        val hasMore: Boolean,
+        val createdAt: Long,
+    )
+
+    @Volatile
+    private var searchSnapshot: SearchSnapshot? = null
+
     private fun fetchFilteredSearchPage(
-        apiPage: Int,
+        snapshot: SearchSnapshot,
         start: Int,
         end: Int,
         query: String,
         filters: FilterList,
-        collected: List<SManga>,
-    ): Observable<MangasPage> = client.newCall(searchMangaRequest(apiPage, query, filters))
-        .asObservableSuccess()
-        .map { response -> searchMangaParse(response, filters) }
-        .flatMap { result ->
-            val mangas = (collected + result.mangas).distinctBy { it.url }
-            if (result.hasNextPage && mangas.size < end && apiPage < MAX_SEARCH_PAGES) {
-                fetchFilteredSearchPage(apiPage + 1, start, end, query, filters, mangas)
-            } else {
-                Observable.just(
-                    MangasPage(
-                        mangas.drop(start).take(PAGE_SIZE),
-                        result.hasNextPage || mangas.size > end,
-                    ),
-                )
-            }
+    ): Observable<MangasPage> {
+        if (snapshot.mangas.size >= end || !snapshot.hasMore || snapshot.nextPage > MAX_SEARCH_PAGES) {
+            return Observable.just(
+                MangasPage(
+                    snapshot.mangas.drop(start).take(PAGE_SIZE),
+                    (snapshot.hasMore && snapshot.nextPage <= MAX_SEARCH_PAGES) || snapshot.mangas.size > end,
+                ),
+            )
         }
+        return client.newCall(searchMangaRequest(snapshot.nextPage, query, filters))
+            .asObservableSuccess()
+            .map { response -> searchMangaParse(response, filters) }
+            .flatMap { result ->
+                val next = SearchSnapshot(
+                    snapshot.key,
+                    (snapshot.mangas + result.mangas).distinctBy { it.url },
+                    snapshot.nextPage + 1,
+                    result.hasNextPage,
+                    snapshot.createdAt,
+                )
+                if (searchSnapshot?.key == snapshot.key && searchSnapshot?.createdAt == snapshot.createdAt ||
+                    searchSnapshot == null || snapshot.nextPage == 1
+                ) {
+                    searchSnapshot = next
+                }
+                fetchFilteredSearchPage(next, start, end, query, filters)
+            }
+    }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val sort = when (filters.firstInstance<SortFilter>().selected) {
@@ -457,6 +492,7 @@ class ProChan(
     companion object {
         private const val PAGE_SIZE = 18
         private const val MAX_SEARCH_PAGES = 100
+        private const val SEARCH_CACHE_MILLIS = 120_000L
         private const val LATEST_CACHE_MILLIS = 120_000L
         private const val CHAPTER_PAGE_SIZE = 100
         private const val MAX_CHAPTER_PAGES = 100
