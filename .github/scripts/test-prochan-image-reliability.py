@@ -35,6 +35,12 @@ class ImageReliabilityContract(unittest.TestCase):
     def test_failed_responses_closed_before_retry(self):
         self.assertGreaterEqual(self.code.count("response.close()"), 2)
 
+    def test_stale_search_requests_cannot_overwrite_cache(self):
+        self.assertIn("private val searchGeneration = java.util.concurrent.atomic.AtomicLong()", self.code)
+        self.assertIn("val generation = searchGeneration.incrementAndGet()", self.code)
+        self.assertIn("if (activeSearchGeneration == generation)", self.code)
+        self.assertIn("fetchFilteredSearchPage(next, start, end, query, filters, generation)", self.code)
+
     def test_url_normalization(self):
         self.assertIn('value.startsWith("//") -> "https:$value"', self.code)
         self.assertIn('value.startsWith("/") -> "https://app.procomic.pro$value"', self.code)
