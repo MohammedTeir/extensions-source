@@ -57,11 +57,10 @@ class ProChan(
                         val response = try {
                             chain.proceed(candidateRequest)
                         } catch (e: java.io.IOException) {
-                            if (attempt == MAX_IMAGE_RETRIES) {
-                                if (index == candidates.lastIndex) throw e
-                                break
-                            }
-                            continue
+                            if (attempt < MAX_IMAGE_RETRIES) continue
+                            if (index < candidates.lastIndex) break
+                            // Return a real HTTP failure if an earlier candidate produced one.
+                            return@Interceptor lastResponse ?: throw e
                         }
                         if (response.isSuccessful) return@Interceptor response
                         val retryable = response.code == 429 || response.code in 500..599
@@ -495,8 +494,12 @@ class ProChan(
             .distinct()
         // Prefer conventional cover formats over AVIF, which can fail to decode
         // on some Android image-loader/device combinations.
-        return candidates.firstOrNull { !it.substringBefore('?').endsWith(".avif", ignoreCase = true) }
+        val primary = candidates.firstOrNull { !it.substringBefore('?').endsWith(".avif", ignoreCase = true) }
             ?: candidates.firstOrNull()
+        if (primary != null) {
+            candidates.firstOrNull { it != primary }?.let { imageFallbacks[primary] = it }
+        }
+        return primary
     }
 
     private fun normalizeImageUrl(url: String?): String? = url
