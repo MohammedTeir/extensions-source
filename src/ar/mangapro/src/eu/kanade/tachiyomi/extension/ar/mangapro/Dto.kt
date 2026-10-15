@@ -63,6 +63,37 @@ class CoverImage(
 )
 
 @Serializable
+class LatestComicsPage(
+    val data: List<LatestComicsSeries>,
+    val meta: LatestComicsMeta = LatestComicsMeta(),
+)
+
+@Serializable
+class LatestComicsMeta(
+    val page: Int = 1,
+    val limit: Int = 18,
+    val category: String = "comics",
+    val hasMore: Boolean = false,
+)
+
+@Serializable
+class LatestComicsSeries(
+    val mangaId: Int,
+    val mangaSlug: String,
+    val mangaTitle: String,
+    val coverImage: String? = null,
+    val coverImageApp: CoverImage? = null,
+    val type: String,
+    val isBlockedSeries: Boolean = false,
+    val chapters: List<LatestComicsChapter> = emptyList(),
+)
+
+@Serializable
+class LatestComicsChapter(
+    val language: String? = null,
+)
+
+@Serializable
 class LatestUpdatesPage(
     val data: List<LatestChapterUpdate>,
     val total: Int = 0,
