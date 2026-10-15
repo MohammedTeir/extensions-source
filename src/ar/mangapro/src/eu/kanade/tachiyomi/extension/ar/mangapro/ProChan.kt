@@ -43,6 +43,7 @@ class ProChan(
             val request = chain.request()
             val primary = request.url.toString()
             val fallback = imageFallbacks[primary]
+            if (fallback == null) return@Interceptor chain.proceed(request)
             val candidates = listOfNotNull(primary, fallback?.takeIf { it != primary })
             var lastResponse: Response? = null
             for ((index, candidate) in candidates.withIndex()) {
