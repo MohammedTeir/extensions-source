@@ -39,42 +39,44 @@ class ProChan(
     private val imageFallbacks = ConcurrentHashMap<String, String>()
 
     override val client = network.cloudflareClient.newBuilder()
-        .addInterceptor(Interceptor { chain ->
-            val request = chain.request()
-            val primary = request.url.toString()
-            val fallback = imageFallbacks[primary]
-            if (fallback == null) return@Interceptor chain.proceed(request)
-            val candidates = listOfNotNull(primary, fallback?.takeIf { it != primary })
-            var lastResponse: Response? = null
-            for ((index, candidate) in candidates.withIndex()) {
-                val candidateRequest = request.newBuilder().url(candidate).build()
-                for (attempt in 0..MAX_IMAGE_RETRIES) {
-                    val response = try {
-                        chain.proceed(candidateRequest)
-                    } catch (e: java.io.IOException) {
-                        if (attempt == MAX_IMAGE_RETRIES) {
-                            if (index == candidates.lastIndex) throw e
+        .addInterceptor(
+            Interceptor { chain ->
+                val request = chain.request()
+                val primary = request.url.toString()
+                val fallback = imageFallbacks[primary]
+                if (fallback == null) return@Interceptor chain.proceed(request)
+                val candidates = listOfNotNull(primary, fallback?.takeIf { it != primary })
+                var lastResponse: Response? = null
+                for ((index, candidate) in candidates.withIndex()) {
+                    val candidateRequest = request.newBuilder().url(candidate).build()
+                    for (attempt in 0..MAX_IMAGE_RETRIES) {
+                        val response = try {
+                            chain.proceed(candidateRequest)
+                        } catch (e: java.io.IOException) {
+                            if (attempt == MAX_IMAGE_RETRIES) {
+                                if (index == candidates.lastIndex) throw e
+                                break
+                            }
+                            continue
+                        }
+                        if (response.isSuccessful) return@Interceptor response
+                        val retryable = response.code == 429 || response.code in 500..599
+                        val useFallback = response.code == 403 || response.code == 404 || retryable
+                        if (retryable && attempt < MAX_IMAGE_RETRIES) {
+                            response.close()
+                            continue
+                        }
+                        if (useFallback && index < candidates.lastIndex) {
+                            response.close()
                             break
                         }
-                        continue
-                    }
-                    if (response.isSuccessful) return@Interceptor response
-                    val retryable = response.code == 429 || response.code in 500..599
-                    val useFallback = response.code == 403 || response.code == 404 || retryable
-                    if (retryable && attempt < MAX_IMAGE_RETRIES) {
-                        response.close()
-                        continue
-                    }
-                    if (useFallback && index < candidates.lastIndex) {
-                        response.close()
+                        lastResponse = response
                         break
                     }
-                    lastResponse = response
-                    break
                 }
-            }
-            lastResponse ?: throw java.io.IOException("تعذر تحميل الصورة من الخوادم المتاحة")
-        })
+                lastResponse ?: throw java.io.IOException("تعذر تحميل الصورة من الخوادم المتاحة")
+            },
+        )
         .build()
 
 
