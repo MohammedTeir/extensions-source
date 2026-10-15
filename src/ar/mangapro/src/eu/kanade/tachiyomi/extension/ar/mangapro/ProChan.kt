@@ -328,7 +328,9 @@ class ProChan(
             .toList()
     }
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT)
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }
 
     override fun pageListRequest(chapter: SChapter): Request = GET(getChapterUrl(chapter), headers)
 
@@ -345,9 +347,9 @@ class ProChan(
         val imagesJson = APP_IMAGES_REGEX.find(body)?.groupValues?.get(1)
             ?: throw Exception("تعذر قراءة صور الفصل")
         val images = imagesJson.parseAs<List<ChapterPageImage>>()
-            .mapNotNull { it.desktop?.takeIf(String::isNotBlank) ?: it.mobile?.takeIf(String::isNotBlank) }
-            .map(::normalizeImageUrl)
-            .distinct()
+            .mapNotNull { image ->
+                normalizeImageUrl(image.desktop?.takeIf(String::isNotBlank) ?: image.mobile?.takeIf(String::isNotBlank))
+            }
         if (images.isEmpty()) throw Exception("لا توجد صور متاحة لهذا الفصل")
 
         val chapterUrl = response.request.url.toString()
