@@ -47,37 +47,57 @@ class ProChan(
         return fetchSearchManga(page, "", filters)
     }
 
+    private class LatestSnapshot(
+        val mangas: List<SManga>,
+        val nextBatch: Int,
+        val hasMore: Boolean,
+        val createdAt: Long,
+    )
+
+    @Volatile
+    private var latestSnapshot: LatestSnapshot? = null
+
     override fun fetchLatestUpdates(page: Int): Observable<MangasPage> {
-        // Reconstruct pages from the start of the update stream. Unlike fixed
-        // batch windows, this never drops entries when an API batch contains
-        // more than the remaining space on a Mihon page. Deduplicate across
-        // batches, since multiple chapter updates can refer to one series.
         val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
         val end = start + PAGE_SIZE
-        return fetchLatestPage(batch = 0, end = end, start = start, collected = emptyList())
+        val now = System.currentTimeMillis()
+        val cached = latestSnapshot?.takeIf {
+            page > 1 && now - it.createdAt in 0 until LATEST_CACHE_MILLIS
+        }
+        val snapshot = cached ?: LatestSnapshot(emptyList(), 0, true, now)
+        return fetchLatestPage(snapshot.nextBatch, start, end, snapshot)
     }
 
     private fun fetchLatestPage(
         batch: Int,
-        end: Int,
         start: Int,
-        collected: List<SManga>,
-    ): Observable<MangasPage> = client.newCall(latestUpdatesRequest(batch + 1))
-        .asObservableSuccess()
-        .map(::latestUpdatesParse)
-        .flatMap { result ->
-            val mangas = (collected + result.mangas).distinctBy { it.url }
-            if (result.hasNextPage && mangas.size < end) {
-                fetchLatestPage(batch + 1, end, start, mangas)
-            } else {
-                Observable.just(
-                    MangasPage(
-                        mangas.drop(start).take(PAGE_SIZE),
-                        result.hasNextPage || mangas.size > end,
-                    ),
-                )
-            }
+        end: Int,
+        snapshot: LatestSnapshot,
+    ): Observable<MangasPage> {
+        if (snapshot.mangas.size >= end || !snapshot.hasMore) {
+            return Observable.just(
+                MangasPage(
+                    snapshot.mangas.drop(start).take(PAGE_SIZE),
+                    snapshot.hasMore || snapshot.mangas.size > end,
+                ),
+            )
         }
+        return client.newCall(latestUpdatesRequest(batch + 1))
+            .asObservableSuccess()
+            .map(::latestUpdatesParse)
+            .flatMap { result ->
+                val next = LatestSnapshot(
+                    (snapshot.mangas + result.mangas).distinctBy { it.url },
+                    batch + 1,
+                    result.hasNextPage,
+                    snapshot.createdAt,
+                )
+                if (latestSnapshot?.createdAt == snapshot.createdAt || latestSnapshot == null || batch == 0) {
+                    latestSnapshot = next
+                }
+                fetchLatestPage(batch + 1, start, end, next)
+            }
+    }
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
         if (query.startsWith("https://") || query.startsWith("http://")) {
@@ -420,6 +440,7 @@ class ProChan(
 
     companion object {
         private const val PAGE_SIZE = 18
+        private const val LATEST_CACHE_MILLIS = 120_000L
         private const val CHAPTER_PAGE_SIZE = 100
         private const val MAX_CHAPTER_PAGES = 100
         private val SUPPORTED_TYPES = setOf("manga", "manhwa", "manhua")
