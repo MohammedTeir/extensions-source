@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
@@ -35,6 +36,46 @@ class ProChan(
 
     private val mangaTypeCache = ConcurrentHashMap<String, String>()
     private val mangaSlugCache = ConcurrentHashMap<String, String>()
+    private val imageFallbacks = ConcurrentHashMap<String, String>()
+
+    override val client = network.cloudflareClient.newBuilder()
+        .addInterceptor(Interceptor { chain ->
+            val request = chain.request()
+            val primary = request.url.toString()
+            val fallback = imageFallbacks[primary]
+            val candidates = listOfNotNull(primary, fallback?.takeIf { it != primary })
+            var lastResponse: Response? = null
+            for ((index, candidate) in candidates.withIndex()) {
+                val candidateRequest = request.newBuilder().url(candidate).build()
+                for (attempt in 0..MAX_IMAGE_RETRIES) {
+                    val response = try {
+                        chain.proceed(candidateRequest)
+                    } catch (e: java.io.IOException) {
+                        if (attempt == MAX_IMAGE_RETRIES) {
+                            if (index == candidates.lastIndex) throw e
+                            break
+                        }
+                        continue
+                    }
+                    if (response.isSuccessful) return@Interceptor response
+                    val retryable = response.code == 429 || response.code in 500..599
+                    val useFallback = response.code == 403 || response.code == 404 || retryable
+                    if (retryable && attempt < MAX_IMAGE_RETRIES) {
+                        response.close()
+                        continue
+                    }
+                    if (useFallback && index < candidates.lastIndex) {
+                        response.close()
+                        break
+                    }
+                    lastResponse = response
+                    break
+                }
+            }
+            lastResponse ?: throw java.io.IOException("تعذر تحميل الصورة من الخوادم المتاحة")
+        })
+        .build()
+
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/ar/")
@@ -425,9 +466,12 @@ class ProChan(
             ?: throw Exception("تعذر قراءة صور الفصل")
         val images = imagesJson.parseAs<List<ChapterPageImage>>()
             .mapNotNull { image ->
-                sequenceOf(image.desktop, image.mobile)
-                    .mapNotNull(::normalizeImageUrl)
-                    .firstOrNull()
+                val desktop = normalizeImageUrl(image.desktop)
+                val mobile = normalizeImageUrl(image.mobile)
+                if (desktop != null && mobile != null && desktop != mobile) {
+                    imageFallbacks[desktop] = mobile
+                }
+                desktop ?: mobile
             }
         if (images.isEmpty()) throw Exception("لا توجد صور متاحة لهذا الفصل")
 
@@ -505,6 +549,7 @@ class ProChan(
         }
 
     companion object {
+        private const val MAX_IMAGE_RETRIES = 1
         private const val PAGE_SIZE = 18
         private const val MAX_SEARCH_PAGES = 100
         private const val SEARCH_CACHE_MILLIS = 120_000L
