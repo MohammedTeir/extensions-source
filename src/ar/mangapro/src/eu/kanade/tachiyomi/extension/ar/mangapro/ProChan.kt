@@ -57,81 +57,11 @@ class ProChan(
             .map { response -> searchMangaParse(response, filters) }
     }
 
-    // The API paginates chapter updates, not unique series. Fill Mihon pages from
-    // eligible distinct series, keeping the batch cursor in a short-lived snapshot.
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> {
-        val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
-        val now = System.currentTimeMillis()
-        val cached = latestSnapshot?.takeIf {
-            page > 1 && now - it.createdAt in 0 until LATEST_CACHE_MILLIS
-        }
-        val generation = latestGeneration.incrementAndGet()
-        val snapshot = cached ?: LatestSnapshot(emptyList(), 0, true, now)
-        return fetchLatestPage(snapshot, start, start + PAGE_SIZE, generation)
-    }
-
-    private class LatestSnapshot(
-        val mangas: List<SManga>,
-        val nextBatch: Int,
-        val hasMore: Boolean,
-        val createdAt: Long,
-    )
-
-    @Volatile
-    private var latestSnapshot: LatestSnapshot? = null
-
-    private val latestGeneration = java.util.concurrent.atomic.AtomicLong()
-
-    private fun fetchLatestPage(
-        snapshot: LatestSnapshot,
-        start: Int,
-        end: Int,
-        generation: Long,
-    ): Observable<MangasPage> {
-        if (snapshot.mangas.size >= end || !snapshot.hasMore || snapshot.nextBatch >= MAX_LATEST_BATCHES) {
-            return Observable.just(
-                MangasPage(
-                    snapshot.mangas.drop(start).take(PAGE_SIZE),
-                    snapshot.mangas.size > end || (snapshot.hasMore && snapshot.nextBatch < MAX_LATEST_BATCHES),
-                ),
-            )
-        }
-        return client.newCall(latestUpdatesBatchRequest(snapshot.nextBatch))
+    // Website Latest comics endpoint already groups chapters by series.
+    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> =
+        client.newCall(latestUpdatesRequest(page))
             .asObservableSuccess()
-            .map { response -> response.parseAs<LatestUpdatesPage>() }
-            .flatMap { result ->
-                val eligible = result.data.asSequence()
-                    .filter { it.type.lowercase(Locale.ROOT) in SUPPORTED_TYPES }
-                    .filter { it.language == null || it.language.equals("AR", ignoreCase = true) }
-                    .filterNot { it.isBlockedSeries }
-                    .distinctBy { it.mangaId }
-                    .map { update ->
-                        mangaTypeCache[update.mangaId.toString()] = update.type
-                        mangaSlugCache[update.mangaId.toString()] = update.mangaSlug
-                        SManga.create().apply {
-                            url = mangaUrl(update.mangaSlug, update.mangaId)
-                            title = update.mangaTitle
-                            thumbnail_url = coverUrl(update.coverImageApp, update.coverImage)
-                        }
-                    }
-                    .toList()
-                val next = LatestSnapshot(
-                    (snapshot.mangas + eligible).distinctBy { it.url },
-                    snapshot.nextBatch + 1,
-                    result.data.isNotEmpty() && result.limit > 0 &&
-                        (result.batch + 1L) * result.limit < result.total,
-                    snapshot.createdAt,
-                )
-                logger.warning(
-                    "ProChan Latest: batch=${result.batch} raw=${result.data.size} " +
-                        "eligible=${eligible.size} unique=${next.mangas.size} next=${next.hasMore}",
-                )
-                if (latestGeneration.get() == generation) {
-                    latestSnapshot = next
-                }
-                fetchLatestPage(next, start, end, generation)
-            }
-    }
+            .map(::latestUpdatesParse)
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
         if (query.startsWith("https://") || query.startsWith("http://")) {
@@ -270,34 +200,33 @@ class ProChan(
         return MangasPage(mangas, result.meta.pages > result.meta.page)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request = latestUpdatesBatchRequest((page - 1).coerceAtLeast(0))
-
-    private fun latestUpdatesBatchRequest(batch: Int): Request {
-        val url = "$baseUrl/api/public/content/latest-chapter-updates".toHttpUrl().newBuilder()
-            .addQueryParameter("batch", batch.toString())
+    override fun latestUpdatesRequest(page: Int): Request {
+        val url = "$baseUrl/api/public/content/latest-updates".toHttpUrl().newBuilder()
+            .addQueryParameter("limit", PAGE_SIZE.toString())
+            .addQueryParameter("page", page.coerceAtLeast(1).toString())
+            .addQueryParameter("category", "comics")
             .build()
         return GET(url, headers)
     }
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val result = response.parseAs<LatestUpdatesPage>()
+        val result = response.parseAs<LatestComicsPage>()
         val mangas = result.data.asSequence()
-            .filter { it.type in SUPPORTED_TYPES }
-            .filter { it.language == null || it.language == "AR" }
+            .filter { it.type.lowercase(Locale.ROOT) in SUPPORTED_TYPES }
             .filterNot { it.isBlockedSeries }
+            .filter { series -> series.chapters.any { it.language.equals("AR", ignoreCase = true) } }
             .distinctBy { it.mangaId }
-            .map { update ->
-                mangaTypeCache[update.mangaId.toString()] = update.type
-                mangaSlugCache[update.mangaId.toString()] = update.mangaSlug
+            .map { series ->
+                mangaTypeCache[series.mangaId.toString()] = series.type
+                mangaSlugCache[series.mangaId.toString()] = series.mangaSlug
                 SManga.create().apply {
-                    url = mangaUrl(update.mangaSlug, update.mangaId)
-                    title = update.mangaTitle
-                    thumbnail_url = coverUrl(update.coverImageApp, update.coverImage)
+                    url = mangaUrl(series.mangaSlug, series.mangaId)
+                    title = series.mangaTitle
+                    thumbnail_url = coverUrl(series.coverImageApp, series.coverImage)
                 }
             }
             .toList()
-        val hasNextPage = (result.batch + 1) * result.limit < result.total
-        return MangasPage(mangas, hasNextPage)
+        return MangasPage(mangas, result.meta.hasMore)
     }
 
     override fun mangaDetailsRequest(manga: SManga): Request {
@@ -552,10 +481,8 @@ class ProChan(
         private val LEGACY_IMAGE_HOST_REGEX = Regex("^https?://app\\.prochan\\.net/", RegexOption.IGNORE_CASE)
         private const val MAX_IMAGE_RETRIES = 1
         private const val PAGE_SIZE = 18
-        private const val MAX_LATEST_BATCHES = 120
         private const val MAX_SEARCH_PAGES = 100
         private const val SEARCH_CACHE_MILLIS = 120_000L
-        private const val LATEST_CACHE_MILLIS = 120_000L
         private const val CHAPTER_PAGE_SIZE = 100
         private const val MAX_CHAPTER_PAGES = 100
         private val SUPPORTED_TYPES = setOf("manga", "manhwa", "manhua")
