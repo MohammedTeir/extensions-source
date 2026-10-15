@@ -275,8 +275,9 @@ class ProChan(
 
         val result = response.parseAs<ChapterList>()
         val chapters = result.data.toMutableList()
+        val seenChapterIds = chapters.mapTo(mutableSetOf()) { it.id }
         var page = 2
-        while (chapters.size < result.total) {
+        while (chapters.size < result.total && page <= MAX_CHAPTER_PAGES) {
             val nextUrl = "$baseUrl/api/public/$type/$id/chapters".toHttpUrl().newBuilder()
                 .addQueryParameter("page", page.toString())
                 .addQueryParameter("limit", CHAPTER_PAGE_SIZE.toString())
@@ -287,7 +288,9 @@ class ProChan(
                 nextResponse.parseAs<ChapterList>()
             }
             if (next.data.isEmpty()) break
-            chapters.addAll(next.data)
+            val unseen = next.data.filter { seenChapterIds.add(it.id) }
+            if (unseen.isEmpty()) break
+            chapters.addAll(unseen)
             page++
         }
 
@@ -416,10 +419,11 @@ class ProChan(
     companion object {
         private const val PAGE_SIZE = 18
         private const val CHAPTER_PAGE_SIZE = 100
+        private const val MAX_CHAPTER_PAGES = 100
         private val SUPPORTED_TYPES = setOf("manga", "manhwa", "manhua")
         private val REQUIRES_TURNSTILE_REGEX = Regex("\"requireTurnstile\":true")
         private val BLOCKED_CHAPTER_REGEX = Regex("\"blocked\":true")
         private val ID_SUFFIX = Regex("(?:^|[-/])(\\d+)(?:/|$)")
-        private val APP_IMAGES_REGEX = Regex("\"appImages\":(\\[.*?\\])", RegexOption.DOT_MATCHES_ALL)
+        private val APP_IMAGES_REGEX = Regex("\\\"appImages\\\"\\s*:\\s*(\\[.*?\\])", RegexOption.DOT_MATCHES_ALL)
     }
 }
