@@ -107,8 +107,25 @@ def main():
             "name": apk.name, "sha256": hashlib.sha256(apk.read_bytes()).hexdigest()
         }}}, indent=2) + "\n", encoding="utf-8"
     )
-    # The old legacy index contains Keiyoushi notices, not our custom extension.
-    (REPO_ROOT / "index.min.json").write_text("[]\n", encoding="utf-8")
+    legacy_index = [{
+        "name": info["name"],
+        "pkg": info["packageName"],
+        "apk": url,
+        "lang": "ar",
+        "code": int(info["versionCode"]),
+        "version": info["versionName"],
+        "nsfw": 1 if info["contentWarning"] == "CONTENT_WARNING_NSFW" else 0,
+        "sources": [{
+            "name": s["name"],
+            "lang": s["lang"],
+            "id": str(s["id"]),
+            "baseUrl": s["baseUrl"],
+        } for s in info["sources"]],
+    }]
+    (REPO_ROOT / "index.min.json").write_text(
+        json.dumps(legacy_index, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(f"Published ProChan metadata: {tag}")
 
 
