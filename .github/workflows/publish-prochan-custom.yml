@@ -57,6 +57,10 @@ jobs:
           printf '%s' "$KEYSTORE" | base64 --decode > signingkey.jks
           chmod 600 signingkey.jks
 
+      - name: ProChan image reliability regression checks
+        working-directory: source
+        run: python -m unittest discover -s .github/scripts -p 'test-prochan-image-reliability.py' -v
+
       - name: Build signed release and validate
         working-directory: source
         env:
