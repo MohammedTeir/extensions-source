@@ -424,6 +424,6 @@ class ProChan(
         private val REQUIRES_TURNSTILE_REGEX = Regex("\"requireTurnstile\":true")
         private val BLOCKED_CHAPTER_REGEX = Regex("\"blocked\":true")
         private val ID_SUFFIX = Regex("(?:^|[-/])(\\d+)(?:/|$)")
-        private val APP_IMAGES_REGEX = Regex("\\\"appImages\\\"\\s*:\\s*(\\[.*?\\])", RegexOption.DOT_MATCHES_ALL)
+        private val APP_IMAGES_REGEX = Regex("\"appImages\"\\s*:\\s*(\\[.*?\\])", RegexOption.DOT_MATCHES_ALL)
     }
 }
