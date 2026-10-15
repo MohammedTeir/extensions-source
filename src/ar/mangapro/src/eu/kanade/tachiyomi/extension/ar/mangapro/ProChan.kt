@@ -87,60 +87,18 @@ class ProChan(
         val filters = getFilterList().apply {
             firstInstance<SortFilter>().state = 2
         }
-        return fetchSearchManga(page, "", filters)
+        // Popular has no client-side filters: one API page is enough for one UI page.
+        return client.newCall(searchMangaRequest(page, "", filters))
+            .asObservableSuccess()
+            .map { response -> searchMangaParse(response, filters) }
     }
 
-    private class LatestSnapshot(
-        val mangas: List<SManga>,
-        val nextBatch: Int,
-        val hasMore: Boolean,
-        val createdAt: Long,
-    )
-
-    @Volatile
-    private var latestSnapshot: LatestSnapshot? = null
-
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> {
-        val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
-        val end = start + PAGE_SIZE
-        val now = System.currentTimeMillis()
-        val cached = latestSnapshot?.takeIf {
-            page > 1 && now - it.createdAt in 0 until LATEST_CACHE_MILLIS
-        }
-        val snapshot = cached ?: LatestSnapshot(emptyList(), 0, true, now)
-        return fetchLatestPage(snapshot.nextBatch, start, end, snapshot)
-    }
-
-    private fun fetchLatestPage(
-        batch: Int,
-        start: Int,
-        end: Int,
-        snapshot: LatestSnapshot,
-    ): Observable<MangasPage> {
-        if (snapshot.mangas.size >= end || !snapshot.hasMore) {
-            return Observable.just(
-                MangasPage(
-                    snapshot.mangas.drop(start).take(PAGE_SIZE),
-                    snapshot.hasMore || snapshot.mangas.size > end,
-                ),
-            )
-        }
-        return client.newCall(latestUpdatesRequest(batch + 1))
+    // The API already paginates latest updates by batch. Fetch one batch per Mihon page
+    // rather than waiting for 18 unique entries across an unbounded number of requests.
+    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> =
+        client.newCall(latestUpdatesRequest(page))
             .asObservableSuccess()
             .map(::latestUpdatesParse)
-            .flatMap { result ->
-                val next = LatestSnapshot(
-                    (snapshot.mangas + result.mangas).distinctBy { it.url },
-                    batch + 1,
-                    result.hasNextPage,
-                    snapshot.createdAt,
-                )
-                if (latestSnapshot?.createdAt == snapshot.createdAt || latestSnapshot == null || batch == 0) {
-                    latestSnapshot = next
-                }
-                fetchLatestPage(batch + 1, start, end, next)
-            }
-    }
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
         if (query.startsWith("https://") || query.startsWith("http://")) {
