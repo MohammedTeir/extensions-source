@@ -39,9 +39,6 @@ class ProChan(
     private val imageFallbacks = ConcurrentHashMap<String, String>()
     private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
 
-    @Volatile
-    private var activeSearchGeneration = 0L
-
     override val client = network.client.newBuilder()
         .addInterceptor(
             Interceptor { chain ->
@@ -136,7 +133,6 @@ class ProChan(
             page > 1 && it.key == key && now - it.createdAt in 0 until SEARCH_CACHE_MILLIS
         }
         val generation = searchGeneration.incrementAndGet()
-        activeSearchGeneration = generation
         val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
         return fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation)
     }
@@ -179,7 +175,7 @@ class ProChan(
                     result.hasNextPage,
                     snapshot.createdAt,
                 )
-                if (activeSearchGeneration == generation) {
+                if (searchGeneration.get() == generation) {
                     searchSnapshot = next
                 }
                 fetchFilteredSearchPage(next, start, end, query, filters, generation)
