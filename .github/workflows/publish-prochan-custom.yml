@@ -1,0 +1,111 @@
+name: Publish custom ProChan feed
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prochan-custom-feed-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout extension source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: >-
+            platforms;android-37.0
+            build-tools;36.0.0
+            platform-tools
+
+      - name: Verify required secrets exist
+        env:
+          KEYSTORE: ${{ secrets.PROCHAN_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.PROCHAN_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.PROCHAN_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PROCHAN_KEY_ALIAS }}
+          REPO_TOKEN: ${{ secrets.EXTENSIONS_REPO_TOKEN }}
+        run: |
+          test -n "$KEYSTORE" && test -n "$STORE_PASSWORD" &&
+          test -n "$KEY_PASSWORD" && test -n "$KEY_ALIAS" && test -n "$REPO_TOKEN"
+
+      - name: Restore private signing keystore
+        working-directory: source
+        env:
+          KEYSTORE: ${{ secrets.PROCHAN_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$KEYSTORE" | base64 --decode > signingkey.jks
+          chmod 600 signingkey.jks
+
+      - name: Build signed release and validate
+        working-directory: source
+        env:
+          KEY_STORE_PASSWORD: ${{ secrets.PROCHAN_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.PROCHAN_KEY_PASSWORD }}
+          ALIAS: ${{ secrets.PROCHAN_KEY_ALIAS }}
+        run: |
+          ./gradlew :src:ar:mangapro:spotlessCheck :src:ar:mangapro:lintRelease :src:ar:mangapro:assembleRelease --no-daemon --console=plain
+
+      - name: Verify APK signing certificate
+        working-directory: source
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(src/ar/mangapro/build/outputs/apk/release/*.apk)
+          test "${#apks[@]}" -eq 1
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "${apks[0]}"
+          actual=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "${apks[0]}" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
+          expected=0093bc9bca53a3d10188bb3b7c51f039c57aea57a617b8d2a374145454d19134
+          test "$actual" = "$expected"
+
+      - name: Checkout destination repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: MohammedTeir/extensions
+          ref: repo
+          token: ${{ secrets.EXTENSIONS_REPO_TOKEN }}
+          path: repo
+          persist-credentials: true
+
+      - name: Generate custom-only index and publish APK
+        working-directory: repo
+        env:
+          GH_TOKEN: ${{ secrets.EXTENSIONS_REPO_TOKEN }}
+        run: |
+          python -m pip install protobuf
+          PYTHONPATH="../source/.github/scripts" python ../source/.github/scripts/publish-prochan-custom.py
+
+      - name: Commit and push custom catalog
+        working-directory: repo
+        run: |
+          git config user.name "MohammedTeir publishing bot"
+          git config user.email "80924323+MohammedTeir@users.noreply.github.com"
+          git add index.json index.pb index.html index.min.json repo.json release-assets.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish custom ProChan extension feed"
+            git push origin HEAD:repo
+          fi
+
+      - name: Remove local signing keystore
+        if: always()
+        run: rm -f source/signingkey.jks
