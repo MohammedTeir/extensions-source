@@ -1,4 +1,4 @@
-name: Publish custom ProChan feed
+name: Publish custom ProChan and Comix feed
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: prochan-custom-feed-publish
+  group: custom-extensions-feed-publish
   cancel-in-progress: false
 
 jobs:
@@ -65,26 +65,28 @@ jobs:
         working-directory: source
         run: ./gradlew -p tests/prochan-http test --no-daemon --console=plain
 
-      - name: Build signed release and validate
+      - name: Build signed releases and validate
         working-directory: source
         env:
           KEY_STORE_PASSWORD: ${{ secrets.PROCHAN_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.PROCHAN_KEY_PASSWORD }}
           ALIAS: ${{ secrets.PROCHAN_KEY_ALIAS }}
         run: |
-          ./gradlew :src:ar:mangapro:spotlessCheck :src:ar:mangapro:lintRelease :src:ar:mangapro:assembleRelease --no-daemon --console=plain
+          ./gradlew :src:ar:mangapro:spotlessCheck :src:en:comix:spotlessCheck :src:ar:mangapro:lintRelease :src:en:comix:lintRelease :src:ar:mangapro:assembleRelease :src:en:comix:assembleRelease --no-daemon --console=plain
 
       - name: Verify APK signing certificate
         working-directory: source
         run: |
           set -euo pipefail
           shopt -s nullglob
-          apks=(src/ar/mangapro/build/outputs/apk/release/*.apk)
-          test "${#apks[@]}" -eq 1
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "${apks[0]}"
-          actual=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "${apks[0]}" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
           expected=0093bc9bca53a3d10188bb3b7c51f039c57aea57a617b8d2a374145454d19134
-          test "$actual" = "$expected"
+          for extension in ar/mangapro en/comix; do
+            apks=(src/$extension/build/outputs/apk/release/*.apk)
+            test "${#apks[@]}" -eq 1
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "${apks[0]}"
+            actual=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "${apks[0]}" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
+            test "$actual" = "$expected"
+          done
 
       - name: Checkout destination repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,7 +97,7 @@ jobs:
           path: repo
           persist-credentials: true
 
-      - name: Generate custom-only index and publish APK
+      - name: Generate two-extension index and publish APKs
         working-directory: repo
         env:
           GH_TOKEN: ${{ secrets.EXTENSIONS_REPO_TOKEN }}
@@ -110,7 +112,7 @@ jobs:
           git config user.email "80924323+MohammedTeir@users.noreply.github.com"
           git add index.json index.pb index.html index.min.json repo.json release-assets.json
           if ! git diff --cached --quiet; then
-            git commit -m "Publish custom ProChan extension feed"
+            git commit -m "Publish custom ProChan and Comix extension feed"
             git push origin HEAD:repo
           fi
 
