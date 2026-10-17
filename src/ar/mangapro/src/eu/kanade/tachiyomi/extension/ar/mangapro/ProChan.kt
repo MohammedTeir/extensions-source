@@ -8,10 +8,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
-import java.util.logging.Logger
 import keiyoushi.annotation.Source
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.firstInstance
@@ -30,6 +26,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.logging.Logger
 
 @Source
 abstract class ProChan : KeiSource() {
@@ -67,25 +67,24 @@ abstract class ProChan : KeiSource() {
         return requestParsed(mangaDetailsRequest(SManga.create().apply { this.url = "/ar/$mangaId" }), ::mangaDetailsParse)
     }
 
-    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage =
-        withContext(Dispatchers.IO) {
-            val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
-            val key = buildString {
-                append(query, '|', searchMangaRequest(1, query, filters).url)
-                append('|', filters.firstInstance<StatusFilter>().selected)
-                val genres = filters.firstInstance<GenreFilter>()
-                val tags = filters.firstInstance<TagFilter>()
-                append('|', genres.included.sorted(), '|', genres.excluded.sorted())
-                append('|', tags.included.sorted(), '|', tags.excluded.sorted())
-            }
-            val now = System.currentTimeMillis()
-            val cached = searchSnapshot?.takeIf {
-                page > 1 && it.key == key && now - it.createdAt in 0 until SEARCH_CACHE_MILLIS
-            }
-            val generation = searchGeneration.incrementAndGet()
-            val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
-            fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation).toBlocking().first()
+    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage = withContext(Dispatchers.IO) {
+        val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
+        val key = buildString {
+            append(query, '|', searchMangaRequest(1, query, filters).url)
+            append('|', filters.firstInstance<StatusFilter>().selected)
+            val genres = filters.firstInstance<GenreFilter>()
+            val tags = filters.firstInstance<TagFilter>()
+            append('|', genres.included.sorted(), '|', genres.excluded.sorted())
+            append('|', tags.included.sorted(), '|', tags.excluded.sorted())
         }
+        val now = System.currentTimeMillis()
+        val cached = searchSnapshot?.takeIf {
+            page > 1 && it.key == key && now - it.createdAt in 0 until SEARCH_CACHE_MILLIS
+        }
+        val generation = searchGeneration.incrementAndGet()
+        val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
+        fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation).toBlocking().first()
+    }
 
     private class SearchSnapshot(
         val key: String,
@@ -226,8 +225,7 @@ abstract class ProChan : KeiSource() {
         SMangaUpdate(updatedManga, updatedChapters)
     }
 
-    override suspend fun getPageList(chapter: SChapter): List<Page> =
-        requestParsed(pageListRequest(chapter), ::pageListParse)
+    override suspend fun getPageList(chapter: SChapter): List<Page> = requestParsed(pageListRequest(chapter), ::pageListParse)
 
     override fun mangaDetailsRequest(manga: SManga): Request {
         val id = mangaId(manga.url)
