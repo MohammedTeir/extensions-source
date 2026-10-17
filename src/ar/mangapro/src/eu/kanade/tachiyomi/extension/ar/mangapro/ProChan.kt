@@ -1,35 +1,35 @@
 package eu.kanade.tachiyomi.extension.ar.mangapro
 
-import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.asObservableSuccess
+import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
-import keiyoushi.source.KeiSource
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonElement
-import okhttp3.Headers
-import okhttp3.OkHttpClient
-import okhttp3.HttpUrl
+import java.text.SimpleDateFormat
+import java.util.concurrent.ConcurrentHashMap
+import java.util.Locale
+import java.util.logging.Logger
 import keiyoushi.annotation.Source
+import keiyoushi.source.KeiSource
 import keiyoushi.utils.firstInstance
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
+import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
-import java.util.logging.Logger
 
 @Source
 abstract class ProChan : KeiSource() {
@@ -40,8 +40,7 @@ abstract class ProChan : KeiSource() {
     private val imageFallbacks = BoundedImageFallbackCache()
     private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
 
-    override fun OkHttpClient.Builder.configureClient() =
-        addInterceptor(ProChanImageRecoveryInterceptor { imageFallbacks[it] })
+    override fun OkHttpClient.Builder.configureClient() = addInterceptor(ProChanImageRecoveryInterceptor { imageFallbacks[it] })
 
     override fun Headers.Builder.configureHeaders() = set("Referer", "$baseUrl/ar/")
 
@@ -57,8 +56,7 @@ abstract class ProChan : KeiSource() {
         return requestParsed(searchMangaRequest(page, "", filters)) { searchMangaParse(it, filters) }
     }
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage =
-        requestParsed(latestUpdatesRequest(page), ::latestUpdatesParse)
+    override suspend fun getLatestUpdates(page: Int): MangasPage = requestParsed(latestUpdatesRequest(page), ::latestUpdatesParse)
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga {
         if (url.host != domain && url.host != "www.$domain") throw Exception("رابط غير مدعوم")
