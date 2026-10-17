@@ -30,7 +30,9 @@ class ImageReliabilityContract(unittest.TestCase):
         self.assertIn("private val searchGeneration = java.util.concurrent.atomic.AtomicLong()", self.code)
         self.assertIn("val generation = searchGeneration.incrementAndGet()", self.code)
         self.assertIn("if (searchGeneration.get() == generation)", self.code)
-        self.assertIn("fetchFilteredSearchPage(next, start, end, query, filters, generation)", self.code)
+        self.assertIn("fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation)", self.code)
+        self.assertIn("if (searchGeneration.get() == generation) searchSnapshot = current", self.code)
+        self.assertIn("val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)", self.code)
 
     def test_url_normalization(self):
         self.assertIn("LEGACY_IMAGE_HOST_REGEX", self.code)
