@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.extension.ar.mangapro
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asObservableSuccess
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -25,7 +24,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import rx.Observable
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -83,7 +81,7 @@ abstract class ProChan : KeiSource() {
         }
         val generation = searchGeneration.incrementAndGet()
         val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
-        fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation).toBlocking().first()
+        fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation)
     }
 
     private class SearchSnapshot(
@@ -97,41 +95,35 @@ abstract class ProChan : KeiSource() {
     @Volatile
     private var searchSnapshot: SearchSnapshot? = null
 
-    private fun fetchFilteredSearchPage(
+    private suspend fun fetchFilteredSearchPage(
         snapshot: SearchSnapshot,
         start: Int,
         end: Int,
         query: String,
         filters: FilterList,
         generation: Long,
-    ): Observable<MangasPage> {
-        if (snapshot.mangas.size >= end || !snapshot.hasMore || snapshot.nextPage > MAX_SEARCH_PAGES) {
-            return Observable.just(
-                MangasPage(
-                    snapshot.mangas.drop(start).take(PAGE_SIZE),
-                    (snapshot.hasMore && snapshot.nextPage <= MAX_SEARCH_PAGES) || snapshot.mangas.size > end,
-                ),
-            )
-        }
-        return client.newCall(searchMangaRequest(snapshot.nextPage, query, filters))
-            .asObservableSuccess()
-            .map { response -> searchMangaParse(response, filters) }
-            .flatMap { result ->
-                val next = SearchSnapshot(
-                    snapshot.key,
-                    (snapshot.mangas + result.mangas).distinctBy { it.url },
-                    snapshot.nextPage + 1,
-                    result.hasNextPage,
-                    snapshot.createdAt,
-                )
-                if (searchGeneration.get() == generation) {
-                    searchSnapshot = next
-                }
-                fetchFilteredSearchPage(next, start, end, query, filters, generation)
+    ): MangasPage {
+        var current = snapshot
+        while (current.mangas.size < end && current.hasMore && current.nextPage <= MAX_SEARCH_PAGES) {
+            val result = requestParsed(searchMangaRequest(current.nextPage, query, filters)) {
+                searchMangaParse(it, filters)
             }
+            current = SearchSnapshot(
+                current.key,
+                (current.mangas + result.mangas).distinctBy { it.url },
+                current.nextPage + 1,
+                result.hasNextPage,
+                current.createdAt,
+            )
+            if (searchGeneration.get() == generation) searchSnapshot = current
+        }
+        return MangasPage(
+            current.mangas.drop(start).take(PAGE_SIZE),
+            (current.hasMore && current.nextPage <= MAX_SEARCH_PAGES) || current.mangas.size > end,
+        )
     }
 
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+    fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val sort = when (filters.firstInstance<SortFilter>().selected) {
             "popular", "total_popularity" -> "popular"
             "oldest" -> "oldest"
@@ -162,7 +154,7 @@ abstract class ProChan : KeiSource() {
         TagFilter(),
     )
 
-    override fun searchMangaParse(response: Response): MangasPage = searchMangaParse(response, getFilterList())
+    fun searchMangaParse(response: Response): MangasPage = searchMangaParse(response, getFilterList())
 
     private fun searchMangaParse(response: Response, filters: FilterList): MangasPage {
         val result = response.parseAs<ContentPage>()
@@ -185,7 +177,7 @@ abstract class ProChan : KeiSource() {
         return MangasPage(mangas, result.meta.pages > result.meta.page)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request {
+    fun latestUpdatesRequest(page: Int): Request {
         val url = "$baseUrl/api/public/content/latest-updates".toHttpUrl().newBuilder()
             .addQueryParameter("limit", PAGE_SIZE.toString())
             .addQueryParameter("page", page.coerceAtLeast(1).toString())
@@ -194,7 +186,7 @@ abstract class ProChan : KeiSource() {
         return GET(url, headers)
     }
 
-    override fun latestUpdatesParse(response: Response): MangasPage {
+    fun latestUpdatesParse(response: Response): MangasPage {
         val result = response.parseAs<LatestComicsPage>()
         val mangas = result.data.asSequence()
             .filter { it.type.lowercase(Locale.ROOT) in SUPPORTED_TYPES }
@@ -227,7 +219,7 @@ abstract class ProChan : KeiSource() {
 
     override suspend fun getPageList(chapter: SChapter): List<Page> = requestParsed(pageListRequest(chapter), ::pageListParse)
 
-    override fun mangaDetailsRequest(manga: SManga): Request {
+    fun mangaDetailsRequest(manga: SManga): Request {
         val id = mangaId(manga.url)
         return GET("$baseUrl/api/content/$id", headers)
     }
@@ -243,7 +235,7 @@ abstract class ProChan : KeiSource() {
         return "$baseUrl/ar/$slug-$id"
     }
 
-    override fun mangaDetailsParse(response: Response): SManga {
+    fun mangaDetailsParse(response: Response): SManga {
         val manga = response.parseAs<Content>()
         mangaTypeCache[manga.id.toString()] = manga.type
         mangaSlugCache[manga.id.toString()] = manga.slug
@@ -288,7 +280,7 @@ abstract class ProChan : KeiSource() {
         }
     }
 
-    override fun chapterListRequest(manga: SManga): Request {
+    fun chapterListRequest(manga: SManga): Request {
         val id = mangaId(manga.url)
         val type = mangaTypeCache[id] ?: lookupMangaType(id)
         mangaSlugCache.putIfAbsent(id, manga.url.substringBefore('?').trimEnd('/').substringAfterLast('/').takeIf { ID_SUFFIX.find(it) == null } ?: id)
@@ -300,7 +292,7 @@ abstract class ProChan : KeiSource() {
         return GET(url, headers)
     }
 
-    override fun chapterListParse(response: Response): List<SChapter> {
+    fun chapterListParse(response: Response): List<SChapter> {
         val requestUrl = response.request.url
         val type = requestUrl.pathSegments[2]
         val id = requestUrl.pathSegments[3]
@@ -366,11 +358,11 @@ abstract class ProChan : KeiSource() {
         timeZone = java.util.TimeZone.getTimeZone("UTC")
     }
 
-    override fun pageListRequest(chapter: SChapter): Request = GET(getChapterUrl(chapter), headers)
+    fun pageListRequest(chapter: SChapter): Request = GET(getChapterUrl(chapter), headers)
 
     override fun getChapterUrl(chapter: SChapter): String = "$baseUrl${chapter.url}"
 
-    override fun pageListParse(response: Response): List<Page> {
+    fun pageListParse(response: Response): List<Page> {
         when (response.code) {
             401, 403 -> throw Exception("رفض الموقع الوصول إلى الفصل؛ افتحه في WebView للتحقق من الجلسة")
             404 -> throw Exception("الفصل غير موجود أو تم حذفه من الموقع")
@@ -408,9 +400,9 @@ abstract class ProChan : KeiSource() {
         return GET(page.imageUrl!!, imageHeaders)
     }
 
-    override fun popularMangaRequest(page: Int): Request = searchMangaRequest(page, "", getFilterList())
-    override fun popularMangaParse(response: Response): MangasPage = searchMangaParse(response)
-    override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
+    fun popularMangaRequest(page: Int): Request = searchMangaRequest(page, "", getFilterList())
+    fun popularMangaParse(response: Response): MangasPage = searchMangaParse(response)
+    fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
     private fun toSManga(manga: Content): SManga {
         mangaTypeCache[manga.id.toString()] = manga.type
