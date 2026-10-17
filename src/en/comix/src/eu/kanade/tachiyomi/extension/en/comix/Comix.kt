@@ -155,6 +155,19 @@ abstract class Comix :
         var response = chain.proceed(request)
         if (response.isSuccessful) return response
 
+        // A blocked browse request cannot be repaired by adding cache-busting query parameters.
+        // Avoid ten extra requests when the site rejects Mihon's client with HTTP 503.
+        if (request.url.encodedPath == "/browse" && response.code == 503) {
+            val body = runCatching { response.peekBody(8192).string() }.getOrDefault("")
+            response.close()
+            val reason = if (body.contains("Third-party apps are not supported", ignoreCase = true)) {
+                "Comix explicitly blocks third-party apps"
+            } else {
+                "Comix returned HTTP 503 to Mihon (the same page may work in Chrome)"
+            }
+            throw IOException("$reason. Try again later or use the official website.")
+        }
+
         for (attempt in 1..10) {
             if (response.code !in SERVER_ERROR_CODES && response.code != 404) break
 
