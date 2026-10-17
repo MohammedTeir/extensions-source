@@ -8,7 +8,7 @@ keiyoushi {
     name = "ProChan"
     versionCode = 69
     contentWarning = ContentWarning.NSFW
-    libVersion = "1.4"
+    libVersion = "1.6"
     source {
         name = "ProChan"
         lang = "ar"
