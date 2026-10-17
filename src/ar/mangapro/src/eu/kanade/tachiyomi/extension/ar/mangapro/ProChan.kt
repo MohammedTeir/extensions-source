@@ -7,7 +7,14 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import keiyoushi.source.KeiSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
+import okhttp3.Headers
+import okhttp3.OkHttpClient
+import okhttp3.HttpUrl
 import keiyoushi.annotation.Source
 import keiyoushi.utils.firstInstance
 import keiyoushi.utils.parseAs
@@ -25,80 +32,62 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Logger
 
 @Source
-class ProChan(
-    override val lang: String,
-    override val id: Long,
-) : HttpSource() {
-    override val name = "ProChan"
+abstract class ProChan : KeiSource() {
     private val domain = "procomic.pro"
-    override val baseUrl = "https://$domain"
-    override val supportsLatest = true
 
     private val mangaTypeCache = ConcurrentHashMap<String, String>()
     private val mangaSlugCache = ConcurrentHashMap<String, String>()
     private val imageFallbacks = BoundedImageFallbackCache()
     private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
 
-    override val client = network.client.newBuilder()
-        .addInterceptor(ProChanImageRecoveryInterceptor { imageFallbacks[it] })
-        .build()
+    override fun OkHttpClient.Builder.configureClient() =
+        addInterceptor(ProChanImageRecoveryInterceptor { imageFallbacks[it] })
 
-    override fun headersBuilder() = super.headersBuilder()
-        .set("Referer", "$baseUrl/ar/")
-        .set("Origin", baseUrl)
+    override fun Headers.Builder.configureHeaders() = set("Referer", "$baseUrl/ar/")
 
-    override fun fetchPopularManga(page: Int): Observable<MangasPage> {
-        val filters = getFilterList().apply {
-            firstInstance<SortFilter>().state = 2
+    private suspend fun <T> requestParsed(request: Request, parse: (Response) -> T): T = withContext(Dispatchers.IO) {
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
+            parse(response)
         }
-        // Popular has no client-side filters: one API page is enough for one UI page.
-        return client.newCall(searchMangaRequest(page, "", filters))
-            .asObservableSuccess()
-            .map { response -> searchMangaParse(response, filters) }
     }
 
-    // Website Latest comics endpoint already groups chapters by series.
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> = client.newCall(latestUpdatesRequest(page))
-        .asObservableSuccess()
-        .map(::latestUpdatesParse)
-
-    override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
-        if (query.startsWith("https://") || query.startsWith("http://")) {
-            val url = query.toHttpUrl()
-            if (url.host != domain && url.host != "www.$domain") {
-                throw Exception("رابط غير مدعوم")
-            }
-            if ("chapter" in url.pathSegments) {
-                throw Exception("يرجى فتح رابط السلسلة وليس رابط الفصل")
-            }
-
-            val mangaId = url.pathSegments.asReversed()
-                .firstNotNullOfOrNull { segment -> ID_SUFFIX.find(segment)?.groupValues?.get(1) }
-                ?: throw Exception("تعذر العثور على رقم السلسلة في الرابط")
-
-            val manga = SManga.create().apply {
-                this@apply.url = "/ar/$mangaId"
-            }
-            return fetchMangaDetails(manga).map { MangasPage(listOf(it), false) }
-        }
-
-        val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
-        val key = buildString {
-            append(query, '|', searchMangaRequest(1, query, filters).url)
-            append('|', filters.firstInstance<StatusFilter>().selected)
-            val genres = filters.firstInstance<GenreFilter>()
-            val tags = filters.firstInstance<TagFilter>()
-            append('|', genres.included.sorted(), '|', genres.excluded.sorted())
-            append('|', tags.included.sorted(), '|', tags.excluded.sorted())
-        }
-        val now = System.currentTimeMillis()
-        val cached = searchSnapshot?.takeIf {
-            page > 1 && it.key == key && now - it.createdAt in 0 until SEARCH_CACHE_MILLIS
-        }
-        val generation = searchGeneration.incrementAndGet()
-        val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
-        return fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation)
+    override suspend fun getPopularManga(page: Int): MangasPage {
+        val filters = getFilterList().apply { firstInstance<SortFilter>().state = 2 }
+        return requestParsed(searchMangaRequest(page, "", filters)) { searchMangaParse(it, filters) }
     }
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage =
+        requestParsed(latestUpdatesRequest(page), ::latestUpdatesParse)
+
+    override suspend fun getMangaByUrl(url: HttpUrl): SManga {
+        if (url.host != domain && url.host != "www.$domain") throw Exception("رابط غير مدعوم")
+        if ("chapter" in url.pathSegments) throw Exception("يرجى فتح رابط السلسلة وليس رابط الفصل")
+        val mangaId = url.pathSegments.asReversed()
+            .firstNotNullOfOrNull { segment -> ID_SUFFIX.find(segment)?.groupValues?.get(1) }
+            ?: throw Exception("تعذر العثور على رقم السلسلة في الرابط")
+        return requestParsed(mangaDetailsRequest(SManga.create().apply { this.url = "/ar/$mangaId" }), ::mangaDetailsParse)
+    }
+
+    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage =
+        withContext(Dispatchers.IO) {
+            val start = (page - 1).coerceAtLeast(0) * PAGE_SIZE
+            val key = buildString {
+                append(query, '|', searchMangaRequest(1, query, filters).url)
+                append('|', filters.firstInstance<StatusFilter>().selected)
+                val genres = filters.firstInstance<GenreFilter>()
+                val tags = filters.firstInstance<TagFilter>()
+                append('|', genres.included.sorted(), '|', genres.excluded.sorted())
+                append('|', tags.included.sorted(), '|', tags.excluded.sorted())
+            }
+            val now = System.currentTimeMillis()
+            val cached = searchSnapshot?.takeIf {
+                page > 1 && it.key == key && now - it.createdAt in 0 until SEARCH_CACHE_MILLIS
+            }
+            val generation = searchGeneration.incrementAndGet()
+            val snapshot = cached ?: SearchSnapshot(key, emptyList(), 1, true, now)
+            fetchFilteredSearchPage(snapshot, start, start + PAGE_SIZE, query, filters, generation).toBlocking().first()
+        }
 
     private class SearchSnapshot(
         val key: String,
@@ -167,7 +156,7 @@ class ProChan(
         return GET(url, headers)
     }
 
-    override fun getFilterList() = FilterList(
+    override fun getFilterList(data: JsonElement?) = FilterList(
         TypeFilter(),
         SortFilter(),
         YearFilter(),
@@ -227,6 +216,20 @@ class ProChan(
             .toList()
         return MangasPage(mangas, result.meta.hasMore)
     }
+
+    override suspend fun fetchMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = withContext(Dispatchers.IO) {
+        val updatedManga = if (fetchDetails) requestParsed(mangaDetailsRequest(manga), ::mangaDetailsParse) else manga
+        val updatedChapters = if (fetchChapters) requestParsed(chapterListRequest(updatedManga), ::chapterListParse) else chapters
+        SMangaUpdate(updatedManga, updatedChapters)
+    }
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> =
+        requestParsed(pageListRequest(chapter), ::pageListParse)
 
     override fun mangaDetailsRequest(manga: SManga): Request {
         val id = mangaId(manga.url)
